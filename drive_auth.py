@@ -1,63 +1,72 @@
 #!/usr/bin/env python3
 """
-Étape 1 : Lancer ce script pour obtenir le lien d'autorisation Google Drive
-Étape 2 : Visiter le lien, autoriser, copier le code
-Étape 3 : Coller le code ici → le token est sauvegardé pour tous les uploads futurs
+Authentification Google Drive via Device Flow
+Pas besoin de navigateur sur le serveur — juste un code à entrer sur google.com/device
 """
-import os
 import json
+import time
+import requests
 from pathlib import Path
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 TOKEN_FILE = Path("/root/kdp-automation/drive_token.json")
-CREDENTIALS_FILE = Path("/root/kdp-automation/drive_credentials.json")
 
-# Client OAuth2 public (credentials partagées pour apps installées)
-# Ces credentials sont "public" et standard pour les apps desktop Google
-CLIENT_CONFIG = {
-    "installed": {
-        "client_id": "764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com",
-        "client_secret": "d-FL95Q19q7MQmFpd7hHD0Ty",
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
-    }
-}
+# Google OAuth2 client "installed app" credentials publiques (gcloud CLI)
+CLIENT_ID     = "32555940559.apps.googleusercontent.com"
+CLIENT_SECRET = "ZmssLNjJy2998hD4CTg2ejr2"
+SCOPE         = "https://www.googleapis.com/auth/drive.file"
 
-def get_credentials():
-    creds = None
-    if TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # Sauvegarder les credentials client
-            with open(CREDENTIALS_FILE, "w") as f:
-                json.dump(CLIENT_CONFIG, f)
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(CREDENTIALS_FILE), SCOPES
-            )
-            # Mode console (pas de navigateur local)
-            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
-            auth_url, _ = flow.authorization_url(prompt="consent")
-            print("\n" + "="*60)
-            print("ÉTAPE 1 : Ouvre ce lien dans ton navigateur :")
-            print("="*60)
-            print(f"\n{auth_url}\n")
-            print("="*60)
-            code = input("ÉTAPE 2 : Colle le code ici → ").strip()
-            flow.fetch_token(code=code)
-            creds = flow.credentials
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
-        print("✅ Token sauvegardé !")
-    return creds
+def get_device_code():
+    r = requests.post("https://oauth2.googleapis.com/device/code", data={
+        "client_id": CLIENT_ID,
+        "scope": SCOPE,
+    })
+    r.raise_for_status()
+    return r.json()
+
+def poll_token(device_code: str, interval: int):
+    while True:
+        time.sleep(interval)
+        r = requests.post("https://oauth2.googleapis.com/token", data={
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "device_code": device_code,
+            "grant_type": "urn:ietf:wg:oauth:2.0:device_code",
+        })
+        data = r.json()
+        if "access_token" in data:
+            return data
+        if data.get("error") not in ("authorization_pending", "slow_down"):
+            print(f"❌ Erreur: {data}")
+            return None
+        print("   ⏳ En attente de ton autorisation...", end="\r")
+
+def main():
+    print("🔐 Authentification Google Drive\n")
+    resp = get_device_code()
+
+    print("="*55)
+    print(f"1. Va sur : {resp['verification_url']}")
+    print(f"2. Entre ce code : {resp['user_code']}")
+    print("3. Connecte-toi avec dranjea7@gmail.com")
+    print("4. Clique Autoriser")
+    print("="*55)
+    print("\n⏳ En attente...\n")
+
+    token_data = poll_token(resp["device_code"], resp.get("interval", 5))
+    if not token_data:
+        return
+
+    TOKEN_FILE.write_text(json.dumps({
+        "token":         token_data["access_token"],
+        "refresh_token": token_data.get("refresh_token", ""),
+        "token_uri":     "https://oauth2.googleapis.com/token",
+        "client_id":     CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scopes":        [SCOPE],
+    }))
+    print(f"\n✅ Token sauvegardé dans {TOKEN_FILE}")
+    print("Lance maintenant :")
+    print(f"   python3 upload_to_drive.py <dossier_livre>")
 
 if __name__ == "__main__":
-    get_credentials()
-    print("✅ Authentification Google Drive réussie ! Lance maintenant :")
-    print("   python3 upload_to_drive.py <dossier_livre>")
+    main()
