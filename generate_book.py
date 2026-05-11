@@ -33,12 +33,13 @@ from ebooklib import epub
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
-AUTHOR = "John. B"
-PAGE_W = 5 * inch
-PAGE_H = 8 * inch
-MARGIN = 0.75 * inch
-ACCENT = colors.HexColor("#1a472a")   # vert foncé
-GOLD   = colors.HexColor("#c9a84c")   # or
+AUTHOR    = "John. B"
+PAGE_W    = 5 * inch
+PAGE_H    = 8 * inch
+MARGIN    = 0.75 * inch
+CONTENT_W = PAGE_W - 2 * MARGIN
+ACCENT    = colors.HexColor("#1a472a")   # vert foncé
+GOLD      = colors.HexColor("#c9a84c")   # or
 
 
 # ─────────────────────────────────────────────
@@ -136,16 +137,86 @@ La prière doit être émouvante, 15 lignes minimum, chaque ligne séparée par 
 # ─────────────────────────────────────────────
 # 2. GÉNÉRATION DE LA COUVERTURE (Ideogram)
 # ─────────────────────────────────────────────
+def _add_cover_text(cover_path: Path, title: str, author: str) -> None:
+    """Overlay title and author name on the cover image using Pillow."""
+    from PIL import Image, ImageDraw, ImageFont
+    import textwrap
+
+    img = Image.open(cover_path).convert("RGBA")
+    W, H = img.size
+
+    # ── Fonts ──
+    font_dir = Path("/usr/share/fonts/truetype")
+    try:
+        font_title  = ImageFont.truetype(str(font_dir / "dejavu/DejaVuSerif-Bold.ttf"), int(H * 0.055))
+        font_sub    = ImageFont.truetype(str(font_dir / "dejavu/DejaVuSerif-BoldItalic.ttf") if (font_dir / "dejavu/DejaVuSerif-BoldItalic.ttf").exists() else str(font_dir / "dejavu/DejaVuSerif-Bold.ttf"), int(H * 0.030))
+        font_author = ImageFont.truetype(str(font_dir / "liberation/LiberationSerif-Italic.ttf"), int(H * 0.026))
+    except Exception:
+        font_title  = ImageFont.load_default()
+        font_sub    = font_title
+        font_author = font_title
+
+    # ── Gradient overlay top (for title) ──
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw_ov = ImageDraw.Draw(overlay)
+    for y in range(int(H * 0.55)):
+        alpha = int(180 * (1 - y / (H * 0.55)))
+        draw_ov.line([(0, y), (W, y)], fill=(10, 40, 20, alpha))
+    # Gradient overlay bottom (for author)
+    for y in range(int(H * 0.18)):
+        y2 = H - 1 - y
+        alpha = int(160 * (1 - y / (H * 0.18)))
+        draw_ov.line([(0, y2), (W, y2)], fill=(10, 30, 15, alpha))
+
+    img = Image.alpha_composite(img, overlay)
+    draw = ImageDraw.Draw(img)
+
+    GOLD_C  = (201, 168, 76, 255)
+    WHITE_C = (255, 255, 255, 255)
+
+    # ── Wrap and draw title ──
+    max_chars = max(12, int(W / (font_title.size * 0.58)))
+    lines = textwrap.wrap(title.upper(), width=max_chars)
+    total_h = len(lines) * int(H * 0.065)
+    y_start = int(H * 0.12)
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font_title)
+        tw = bbox[2] - bbox[0]
+        x = (W - tw) // 2
+        # Shadow
+        draw.text((x + 2, y_start + 2), line, font=font_title, fill=(0, 0, 0, 160))
+        draw.text((x, y_start), line, font=font_title, fill=WHITE_C)
+        y_start += int(H * 0.065)
+
+    # ── Gold separator ──
+    sep_y = y_start + int(H * 0.015)
+    sep_w = int(W * 0.45)
+    sep_x = (W - sep_w) // 2
+    draw.rectangle([sep_x, sep_y, sep_x + sep_w, sep_y + 3], fill=GOLD_C)
+
+    # ── Author name at bottom ──
+    author_text = f"— {author} —"
+    bbox = draw.textbbox((0, 0), author_text, font=font_author)
+    aw = bbox[2] - bbox[0]
+    ax = (W - aw) // 2
+    ay = int(H * 0.90)
+    draw.text((ax + 1, ay + 1), author_text, font=font_author, fill=(0, 0, 0, 140))
+    draw.text((ax, ay), author_text, font=font_author, fill=GOLD_C)
+
+    img = img.convert("RGB")
+    img.save(cover_path, "JPEG", quality=95)
+
+
 def generate_cover(title: str, subtitle: str, output_dir: Path) -> Path:
     print("🎨 Génération de la couverture avec Ideogram...")
 
-    # Prompt en anglais pour éviter les problèmes d'encodage
     prompt = (
         "Professional Christian devotional book cover for KDP publishing. "
-        "Deep forest green background with warm golden light rays from above. "
-        "Subtle open Bible and cross motif, peaceful spiritual atmosphere. "
-        "Premium serif typography centered on the cover, elegant and uplifting design. "
-        "Professional Christian publishing quality, portrait format, minimalist style."
+        "Deep forest green background with warm golden light rays descending from above. "
+        "Subtle open Bible and cross motif in lower half, peaceful spiritual atmosphere. "
+        "NO text, no letters, no words anywhere on the image. "
+        "Clean space at the top third for title overlay. "
+        "Professional Christian publishing quality, portrait format, elegant minimalist style."
     )
 
     payload = {
@@ -178,6 +249,9 @@ def generate_cover(title: str, subtitle: str, output_dir: Path) -> Path:
     img_data = requests.get(image_url).content
     with open(cover_path, "wb") as f:
         f.write(img_data)
+
+    # Overlay title and author name
+    _add_cover_text(cover_path, title, AUTHOR)
 
     print(f"✅ Couverture sauvegardée : {cover_path}")
     return cover_path
@@ -217,28 +291,69 @@ def build_pdf(data: dict, cover_path: Path, output_dir: Path) -> Path:
     s_section     = style("Section",    fontName="Helvetica-Bold", fontSize=13, leading=18, alignment=TA_CENTER, textColor=ACCENT, spaceBefore=20, spaceAfter=12)
     s_intro       = style("Intro",      fontName="Helvetica", fontSize=10.5, leading=16, alignment=TA_JUSTIFY, spaceAfter=8)
 
+    # Styles supplémentaires
+    s_toc_entry_pg = style("TocEntryPg", fontName="Helvetica", fontSize=9.5, leading=15,
+                           textColor=colors.HexColor("#333333"))
+    s_sommaire_day = style("SommaireDay", fontName="Helvetica-Bold", fontSize=10, leading=14,
+                           textColor=ACCENT, spaceBefore=8, spaceAfter=2)
+    s_sommaire_txt = style("SommaireTxt", fontName="Helvetica-Oblique", fontSize=9.5, leading=14,
+                           textColor=colors.HexColor("#444444"), leftIndent=8, spaceAfter=6)
+
+    # Page numbers: title=1, toc=2-3, intro=4-5, sommaire=6-11, days start at 12
+    DAYS_START = 12
+
+    def toc_line(label, page_num):
+        """Return a dotted leader TOC line using a two-column Table."""
+        dot_leader = " . " * 30
+        data_row = [[Paragraph(label, s_toc_entry_pg),
+                     Paragraph(str(page_num), style("PgNum", fontName="Helvetica",
+                               fontSize=9.5, leading=15, alignment=TA_RIGHT,
+                               textColor=colors.HexColor("#333333")))]]
+        t = Table(data_row, colWidths=[CONTENT_W * 0.88, CONTENT_W * 0.12])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        return t
+
+    def first_sentence(text: str) -> str:
+        """Extract first 1-2 sentences as teaser."""
+        import re as _re
+        sents = _re.split(r'(?<=[.!?])\s+', text.strip())
+        result = sents[0] if sents else text[:120]
+        if len(sents) > 1 and len(result) < 80:
+            result += " " + sents[1]
+        return result[:200]
+
     story = []
 
-    # ── Page de couverture ──
-    story.append(Spacer(1, 1.5 * inch))
+    # ── 1. Page de titre ──
+    story.append(Spacer(1, 1.2 * inch))
     story.append(Paragraph(data['title'].upper(), s_title_page))
-    story.append(Spacer(1, 0.3 * inch))
+    story.append(Spacer(1, 0.25 * inch))
     story.append(Paragraph(data['subtitle'], s_subtitle))
-    story.append(Spacer(1, 0.5 * inch))
-    story.append(HRFlowable(width="60%", thickness=1.5, color=GOLD, hAlign="CENTER"))
-    story.append(Spacer(1, 0.5 * inch))
+    story.append(Spacer(1, 0.4 * inch))
+    story.append(HRFlowable(width="55%", thickness=1.5, color=GOLD, hAlign="CENTER"))
+    story.append(Spacer(1, 0.4 * inch))
     story.append(Paragraph(AUTHOR, s_author))
     story.append(PageBreak())
 
-    # ── Sommaire ──
-    story.append(Paragraph("SOMMAIRE", s_toc_title))
+    # ── 2. Table des matières (Contents) ──
+    story.append(Paragraph("Contents", s_toc_title))
     story.append(Spacer(1, 0.2 * inch))
     for day in data['days']:
-        entry = f"Jour {day['number']} – {day['title'].title()}"
-        story.append(Paragraph(entry, s_toc_entry))
+        label = f"JOUR {day['number']} – {day['title'].upper()}"
+        pg = DAYS_START + (day['number'] - 1) * 2
+        story.append(toc_line(label, pg))
+    # Footer sections
+    a_relire_pg = DAYS_START + 30 * 2
+    priere_pg   = a_relire_pg + 1
+    story.append(toc_line("À RELIRE EN TEMPS VOULU…", a_relire_pg))
+    story.append(toc_line("PRIÈRE FINALE", priere_pg))
     story.append(PageBreak())
 
-    # ── Introduction ──
+    # ── 3. Introduction ──
     story.append(Paragraph("Introduction", s_section))
     story.append(Spacer(1, 0.2 * inch))
     for para in data['introduction'].split('\n\n'):
@@ -247,28 +362,33 @@ def build_pdf(data: dict, cover_path: Path, output_dir: Path) -> Path:
             story.append(Paragraph(para, s_intro))
     story.append(PageBreak())
 
-    # ── 30 Jours ──
+    # ── 4. Sommaire détaillé (teasers) ──
+    story.append(Paragraph("SOMMAIRE", s_toc_title))
+    story.append(Spacer(1, 0.1 * inch))
     for day in data['days']:
-        # Titre du jour
-        story.append(Paragraph(f"JOUR {day['number']} – {day['title']}", s_chapter))
+        day_label = f"Jour {day['number']} – {day['title'].title()}"
+        teaser = first_sentence(day['body'])
+        story.append(Paragraph(day_label, s_sommaire_day))
+        story.append(Paragraph(teaser, s_sommaire_txt))
+    story.append(PageBreak())
+
+    # ── 5. 30 Jours ──
+    for day in data['days']:
+        story.append(Paragraph(f"JOUR {day['number']} – {day['title'].upper()}", s_chapter))
         story.append(HRFlowable(width="40%", thickness=0.5, color=GOLD, hAlign="CENTER", spaceAfter=14))
 
-        # Corps
         for para in day['body'].split('\n\n'):
             para = para.strip()
             if para:
                 story.append(Paragraph(para, s_body))
 
-        # Verset
         story.append(Paragraph("✦ Verset du jour", s_verse_label))
         story.append(Paragraph(day['verse'], s_verse))
-
-        # Défi
         story.append(Paragraph("✦ Pour aller plus loin", s_chal_label))
         story.append(Paragraph(day['challenge'], s_challenge))
         story.append(PageBreak())
 
-    # ── À relire ──
+    # ── 6. À relire ──
     story.append(Paragraph("À RELIRE EN TEMPS VOULU…", s_section))
     story.append(Spacer(1, 0.2 * inch))
     for para in data['a_relire'].split('\n\n'):
@@ -277,7 +397,7 @@ def build_pdf(data: dict, cover_path: Path, output_dir: Path) -> Path:
             story.append(Paragraph(para, s_intro))
     story.append(PageBreak())
 
-    # ── Prière finale ──
+    # ── 7. Prière finale ──
     story.append(Paragraph("PRIÈRE FINALE", s_section))
     story.append(Spacer(1, 0.2 * inch))
     for line in data['priere_finale'].split('\n'):
