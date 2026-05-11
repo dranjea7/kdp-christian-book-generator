@@ -48,10 +48,10 @@
     },
     {
       "parameters": {
-        "command": "=ls /root/kdp-automation/output/{{ $json.body.theme.replace(/ /g, '_').replace(/[^\\w_]/g, '') | slice(0, 50) }}/*.pdf 2>/dev/null | head -1"
+        "command": "=cd /root/kdp-automation && python3 upload_to_drive.py \"output/$(echo '{{ $('Webhook - Nouveau Livre').item.json.body.theme }}' | sed 's/ /_/g' | tr -dc '[:alnum:]_')\" 2>&1"
       },
-      "id": "find-output",
-      "name": "Trouver les fichiers",
+      "id": "upload-drive",
+      "name": "Upload Drive",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [900, 220]
@@ -59,7 +59,7 @@
     {
       "parameters": {
         "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
-        "text": "=✅ *Nouveau livre généré !*\n\n📖 *{{ $('Webhook - Nouveau Livre').item.json.body.theme }}*\n\n📄 PDF, EPUB et couverture créés avec succès.\n\n📁 Dossier : `/root/kdp-automation/output/`\n\n_Généré automatiquement par KDP Bot_",
+        "text": "=✅ *Nouveau livre généré et uploadé !*\n\n📖 *{{ $('Webhook - Nouveau Livre').item.json.body.theme }}*\n\n📄 PDF, EPUB et couverture créés avec succès.\n\n☁️ Disponible sur Google Drive dans _Livres chrétien version finale_\n\n_Généré automatiquement par KDP Bot_",
         "additionalFields": {"parse_mode": "Markdown"}
       },
       "id": "telegram-success",
@@ -103,9 +103,9 @@
       ]
     },
     "Générer le Livre": {
-      "main": [[{"node": "Trouver les fichiers", "type": "main", "index": 0}]]
+      "main": [[{"node": "Upload Drive", "type": "main", "index": 0}]]
     },
-    "Trouver les fichiers": {
+    "Upload Drive": {
       "main": [[{"node": "Telegram - Succès", "type": "main", "index": 0}]]
     }
   },
@@ -117,6 +117,5 @@
   "staticData": null,
   "tags": [{"name": "KDP"}, {"name": "Livres Chrétiens"}],
   "triggerCount": 0,
-  "updatedAt": "2026-05-11T00:00:00.000Z",
   "versionId": "1"
 }
