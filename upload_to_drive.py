@@ -31,7 +31,6 @@ def get_service():
 
     # Si refresh token fourni directement via variable d'environnement
     if refresh_token:
-        from google.oauth2.credentials import Credentials
         creds = Credentials(
             token=None,
             refresh_token=refresh_token,
@@ -52,11 +51,20 @@ def get_service():
         print("   Option 1 : export GDRIVE_REFRESH_TOKEN='1//...' puis relancer")
         print("   Option 2 : python3 drive_auth.py")
         sys.exit(1)
-    creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-    if creds.expired and creds.refresh_token:
+    with open(TOKEN_FILE) as f:
+        td = json.load(f)
+    creds = Credentials(
+        token=td.get("token"),
+        refresh_token=td.get("refresh_token"),
+        token_uri=td.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=td.get("client_id"),
+        client_secret=td.get("client_secret"),
+        scopes=td.get("scopes", SCOPES),
+    )
+    if creds.expired or not creds.token:
         creds.refresh(Request())
         with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+            json.dump(json.loads(creds.to_json()), f)
     return build("drive", "v3", credentials=creds)
 
 
